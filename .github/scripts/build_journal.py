@@ -6,11 +6,11 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import subprocess
+import subprocess  # nosec B404 - Git is invoked without a shell using fixed arguments.
 from pathlib import Path
 from typing import Any
 
-import markdown
+import markdown  # pylint: disable=import-error
 
 ENTRY_NAME = re.compile(r"^[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+)*$")
 TAG_NAME = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -75,7 +75,9 @@ def original_commit_date(repo_root: Path, source_file: Path) -> str:
         "--",
         relative_path.as_posix(),
     ]
-    result = subprocess.run(command, check=False, capture_output=True, text=True)
+    result = subprocess.run(  # nosec B603 - argument list is never shell-expanded.
+        command, check=False, capture_output=True, text=True
+    )
     dates = [line.strip() for line in result.stdout.splitlines() if line.strip()]
     if result.returncode != 0 or not dates:
         detail = result.stderr.strip() or "file has not been committed"

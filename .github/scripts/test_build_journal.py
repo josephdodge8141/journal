@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
+import subprocess  # nosec B404 - tests invoke only the local Git executable.
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
 from build_journal import JournalError, build, title_from_folder
 
@@ -36,7 +37,7 @@ class JournalBuilderTest(unittest.TestCase):
         if date:
             environment["GIT_AUTHOR_DATE"] = date
             environment["GIT_COMMITTER_DATE"] = date
-        subprocess.run(
+        subprocess.run(  # nosec B603 B607 - fixed Git command in an isolated test repo.
             ["git", "-C", str(self.root), *arguments],
             check=True,
             capture_output=True,
@@ -174,7 +175,7 @@ class JournalBuilderTest(unittest.TestCase):
         )
 
 
-def read_json(path: Path) -> object:
+def read_json(path: Path) -> Any:
     """Read JSON in assertions without importing an implementation helper."""
     return json.loads(path.read_text(encoding="utf-8"))
 
