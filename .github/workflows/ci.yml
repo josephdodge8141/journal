@@ -1,0 +1,29 @@
+name: CI/CD
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  journal-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install --requirement .github/requirements.txt
+      - run: python -m unittest discover --start-directory .github/scripts --pattern "test_*.py"
+
+  ci-cd:
+    needs: journal-checks
+    uses: josephdodge8141/auto-pr/.github/workflows/ci-cd-pipeline.yml@74b5105cac5cfb6614e0fc59b4c39eb8899df689
+    with:
+      megalinter_disable_linters: MARKDOWN_MARKDOWNLINT
