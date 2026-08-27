@@ -1,0 +1,124 @@
+name: Publish journal
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - journal/**
+      - .github/requirements.txt
+      - .github/scripts/**
+      - .github/workflows/publish.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-journal
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install --requirement .github/requirements.txt
+      - run: python -m unittest discover --start-directory .github/scripts --pattern "test_*.py"
+      - uses: actions/checkout@v4
+        with:
+          repository: josephdodge8141/landing-page
+          token: ${{ secrets.LANDING_PAGE_TOKEN }}
+          path: landing-page
+      - name: Generate landing-page content
+        run: >-
+          python .github/scripts/build_journal.py
+          --journal-dir journal
+          --repo-root .
+          --ideas-file landing-page/public/ideas.json
+          --tags-file landing-page/public/tags.json
+      - name: Open generated-content pull request
+        id: pull-request
+        env:
+          GH_TOKEN: ${{ secrets.LANDING_PAGE_TOKEN }}
+        run: |
+          cd landing-page
+          if git diff --quiet -- public/ideas.json public/tags.json; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          branch="journal-sync-${GITHUB_RUN_ID}"
+          url=$(gh pr list \
+            --repo josephdodge8141/landing-page \
+            --head "$branch" \
+            --state open \
+            --json url \
+            --jq '.[0].url // ""')
+          if [ -n "$url" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "url=$url" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            url=$(gh pr create \
+              --repo josephdodge8141/landing-page \
+              --base main \
+              --head "$branch" \
+              --title "Publish journal ${GITHUB_SHA::12}" \
+              --body "Generated from josephdodge8141/journal@${GITHUB_SHA}.")
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "url=$url" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config user.name "journal-publisher[bot]"
+          git config user.email "journal-publisher[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add public/ideas.json public/tags.json
+          git commit -m "Publish journal ${GITHUB_SHA::12}"
+          git push origin "$branch"
+          url=$(gh pr create \
+            --repo josephdodge8141/landing-page \
+            --base main \
+            --head "$branch" \
+            --title "Publish journal ${GITHUB_SHA::12}" \
+            --body "Generated from josephdodge8141/journal@${GITHUB_SHA}.")
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+      - name: Wait for auto-PR merge
+        if: steps.pull-request.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.LANDING_PAGE_TOKEN }}
+          PR_URL: ${{ steps.pull-request.outputs.url }}
+        run: |
+          for _ in $(seq 1 180); do
+            state=$(gh pr view "$PR_URL" --json state --jq .state)
+            if [ "$state" = "MERGED" ]; then
+              exit 0
+            fi
+            if [ "$state" = "CLOSED" ]; then
+              echo "error: generated-content pull request closed without merging"
+              exit 1
+            fi
+            failures=$(gh pr view "$PR_URL" --json statusCheckRollup --jq '
+              [.statusCheckRollup[] | select(
+                .conclusion == "ACTION_REQUIRED" or
+                .conclusion == "CANCELLED" or
+                .conclusion == "FAILURE" or
+                .conclusion == "STARTUP_FAILURE" or
+                .conclusion == "STALE" or
+                .conclusion == "TIMED_OUT" or
+                .state == "ERROR" or
+                .state == "FAILURE"
+              )] | length')
+            if [ "$failures" -gt 0 ]; then
+              echo "error: generated-content pull request checks failed"
+              exit 1
+            fi
+            sleep 5
+          done
+          echo "error: timed out waiting for auto-PR merge"
+          exit 1
